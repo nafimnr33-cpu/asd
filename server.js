@@ -537,10 +537,13 @@ app.post('/api/calls', async (req, res) => {
         try {
             const data = await fs.readFile(callsFile, 'utf-8');
             calls = JSON.parse(data);
-        } catch {}
+            console.log('📋 Existing calls before adding new one:', calls.length);
+        } catch (err) {
+            console.log('⚠️  No existing calls file, creating new one');
+        }
 
         const newCall = {
-            id: `call-${callIdCounter++}`,
+            id: `call-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             fromAccountId,
             toAccountId,
             fromName,
@@ -553,10 +556,25 @@ app.post('/api/calls', async (req, res) => {
         };
 
         calls.push(newCall);
-        await fs.writeFile(callsFile, JSON.stringify(calls, null, 2));
 
-        console.log('✅ Call saved to file:', newCall.id);
-        console.log('📋 Total calls now:', calls.length);
+        // Write to file with error handling
+        try {
+            await fs.writeFile(callsFile, JSON.stringify(calls, null, 2));
+            console.log('✅ Call saved to file:', newCall.id);
+            console.log('📋 Total calls now:', calls.length);
+
+            // Verify the write was successful by reading back
+            const verifyData = await fs.readFile(callsFile, 'utf-8');
+            const verifyCalls = JSON.parse(verifyData);
+            console.log('✅ Verified calls in file:', verifyCalls.length);
+
+            if (!verifyCalls.find(c => c.id === newCall.id)) {
+                console.error('❌ WARNING: Call not found in file after write!');
+            }
+        } catch (writeError) {
+            console.error('❌ Failed to write/verify call:', writeError);
+            throw writeError;
+        }
 
         res.json({ success: true, call: newCall });
     } catch (error) {
@@ -808,16 +826,20 @@ app.get('/api/calls', async (req, res) => {
             const data = await fs.readFile(callsFile, 'utf-8');
             calls = JSON.parse(data);
             console.log('📋 Read calls from file:', calls.length, 'total calls');
+            console.log('📋 Raw calls data:', JSON.stringify(calls, null, 2));
         } catch (err) {
             console.log('⚠️  No calls file or empty:', err.message);
         }
 
         if (toAccountId) {
+            const beforeFilter = calls.length;
             calls = calls.filter(call => call.toAccountId === toAccountId);
-            console.log('📞 Filtered calls for user', toAccountId, ':', calls.length, 'calls');
+            console.log('📞 Filtered calls for user', toAccountId, ':', calls.length, 'calls (before:', beforeFilter, ')');
+            if (calls.length > 0) {
+                console.log('📞 Returning calls:', JSON.stringify(calls, null, 2));
+            }
         }
 
-        console.log('📤 Returning calls:', calls);
         res.json(calls);
     } catch (error) {
         console.error('❌ Error getting calls:', error);
@@ -885,11 +907,14 @@ setInterval(async () => {
 
         // Remove calls older than 5 minutes
         const before = calls.length;
-        calls = calls.filter(call => now - call.createdAt < 5 * 60 * 1000);
+        calls = calls.filter(call => {
+            const age = now - call.createdAt;
+            return age < 5 * 60 * 1000;
+        });
 
         if (calls.length !== before) {
             await fs.writeFile(callsFile, JSON.stringify(calls, null, 2));
-            console.log(`🧹 Cleaned up ${before - calls.length} old calls`);
+            console.log(`🧹 Cleaned up ${before - calls.length} old calls (kept ${calls.length})`);
         }
     } catch (error) {
         console.error('Error cleaning up calls:', error);
